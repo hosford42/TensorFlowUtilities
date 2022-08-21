@@ -179,3 +179,32 @@ def uniform_random_rotation_matrix(d, batch_shape=()) -> tf.Tensor:
         raise ImportError("This functionality requires tensorflow_probability to be installed.")
     orientations = tfp.random.spherical_uniform(batch_shape, d)
     return unit_vector_to_rotation_matrix(orientations)
+
+
+@tf.function(experimental_relax_shapes=True)
+def sliding_window(x, width, axis=-1):
+    """Replace the axis dimension of size s with 2 dimensions of shape (s - w + 1, w), where
+    each of the s - w + 1 indices of the first new dimension corresponds to a consecutive window of
+    with w from the original axis. For example, if x has shape (6, 7) and the window width is 3, the
+    returned shape will be (6, 7 - 3 + 1, 3) == (6, 5, 3).
+
+    Let y = sliding_window(x, w). Then for each i in range(y.shape[0]), each j in range(y.shape[1]),
+    and each k in range(y.shape[2]), y[i, j, k] == x[i, j + k] will evaluate to True."""
+    x = tf.convert_to_tensor(x)
+    rank = tf.rank(x)
+    axis = axis if axis >= 0 else axis + rank
+    tf.assert_greater(axis + 1, 0)
+    tf.assert_less(axis, rank)
+    leading_shape = tf.shape(x)[:axis]
+    trailing_shape = tf.shape(x)[axis + 1:]
+    slice_count = tf.shape(x)[axis] - width + 1
+    slices = tf.TensorArray(x.dtype, slice_count)
+    for offset in tf.range(slice_count):
+        start = tf.concat([tf.zeros_like(leading_shape), [offset], tf.zeros_like(trailing_shape)],
+                          axis=-1)
+        size = tf.concat([leading_shape, [width], trailing_shape], axis=-1)
+        window = tf.slice(x, start, size)
+        slices = slices.write(offset, window)
+    stacked = slices.stack()
+    permutation = tf.concat([tf.range(1, axis + 1), [0], tf.range(axis + 1, rank + 1)], axis=-1)
+    return tf.transpose(stacked, permutation)
