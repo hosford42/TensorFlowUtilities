@@ -109,6 +109,17 @@ def dynamically_condition_covariance_matrix(variance, min_var=0.0001, jitter=0.0
     return variance
 
 
+@tf.function
+def mahalanobis_sq(points, stddev) -> tf.Tensor:
+    """Compute the square of the mahalanobis distance of a batch of points from the mean w.r.t. a 
+    zero-mean distribution with the given lower-triangular standard deviation matrix."""
+    var_inv = tf.linalg.pinv(stddev_to_variance(stddev))
+    result = tf.matmul(points[..., tf.newaxis, :],
+                       tf.matmul(var_inv[tf.newaxis],
+                                 points[..., :, tf.newaxis]))
+    return tf.squeeze(result, axis=(-2, -1))
+
+
 @tf.custom_gradient
 def sample_multivariate_normal(mean, stddev, batch_shape=(), seed=None) -> tf.Tensor:
     """Produce a sample from a multivariate normal distribution with the given mean and
