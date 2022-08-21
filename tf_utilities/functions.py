@@ -394,6 +394,17 @@ def uniform_random_rotation_matrix(d, batch_shape=()) -> tf.Tensor:
     return unit_vector_to_rotation_matrix(orientations)
 
 
+@tf.function
+def randomly_rotate_batch(x) -> tf.Tensor:
+    """Apply the same uniformly random rotation about the origin to all the vectors in the batch."""
+    x = tf.convert_to_tensor(x)
+    channels = tf.shape(x)[-1]
+    rotation = uniform_random_rotation_matrix(channels)
+    rotation = tf.reshape(rotation, tf.concat([tf.ones(tf.rank(x) - 1, dtype=tf.shape(x).dtype),
+                                               [channels, channels]], axis=-1))
+    return tf.matmul(rotation, x[..., tf.newaxis])[..., 0]
+
+
 @tf.function(experimental_relax_shapes=True)
 def sliding_window(x, width, axis=-1):
     """Replace the axis dimension of size s with 2 dimensions of shape (s - w + 1, w), where
