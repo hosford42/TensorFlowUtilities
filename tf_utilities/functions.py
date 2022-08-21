@@ -1,3 +1,5 @@
+import math
+
 import tensorflow as tf
 
 try:
@@ -208,3 +210,24 @@ def sliding_window(x, width, axis=-1):
     stacked = slices.stack()
     permutation = tf.concat([tf.range(1, axis + 1), [0], tf.range(axis + 1, rank + 1)], axis=-1)
     return tf.transpose(stacked, permutation)
+
+
+@tf.function
+def complex_matrix_pow(m, p) -> tf.Tensor:
+    m = tf.convert_to_tensor(m)
+    p = tf.convert_to_tensor(p)
+    eig_vals, eig_vects = tf.eig(m)
+    eig_vects_inv = tf.linalg.inv(eig_vects)
+    diagonal = tf.linalg.set_diag(tf.zeros_like(m, dtype=eig_vals.dtype), eig_vals)
+    return tf.matmul(eig_vects, tf.matmul(tf.pow(diagonal, tf.cast(p, eig_vals.dtype)),
+                                          eig_vects_inv))
+
+
+@tf.function
+def real_matrix_pow(m, p, tolerance=0.0001) -> tf.Tensor:
+    complex_result = complex_matrix_pow(m, p)
+    return tf.where(tf.reduce_all(tf.abs(tf.math.imag(complex_result)) <= tolerance,
+                                  axis=(-2, -1),
+                                  keepdims=True),
+                    tf.cast(complex_result, tf.float32),
+                    math.nan)
