@@ -185,6 +185,180 @@ def sample_multivariate_normal(mean, stddev, batch_shape=(), seed=None) -> tf.Te
 
 
 @tf.function
+def sum_of_independent_gaussians(mean1, stddev1, mean2, stddev2,
+                                 multivariate=True) -> Tuple[tf.Tensor, tf.Tensor]:
+    """The sum of two independent gaussian variables follows a gaussian distribution with the mean
+    and variance equal to the sums of the means and variances, respectively, of the variables.
+    Compute the mean and lower-triangular standard deviation matrix of the gaussian variable that 
+    results from adding two gaussian variables with the indicated statistics."""
+    mean1 = tf.convert_to_tensor(mean1)
+    stddev1 = tf.convert_to_tensor(stddev1)
+    mean2 = tf.convert_to_tensor(mean2)
+    stddev2 = tf.convert_to_tensor(stddev2)
+    variance1 = stddev_to_variance(stddev1, multivariate=multivariate)
+    variance2 = stddev_to_variance(stddev2, multivariate=multivariate)
+    mean = mean1 + mean2
+    variance = variance1 + variance2
+    return mean, variance_to_stddev(variance, multivariate=multivariate)
+
+
+@tf.function
+def gaussian_pdf_product(mean1, stddev1, mean2, stddev2,
+                         multivariate=True) -> Tuple[tf.Tensor, tf.Tensor]:
+    """The product of the PDFs of two gaussian distributions is proportionate to a gaussian PDF
+    whose mean and variance are weighted averages of the means and variances, respectively, of the
+    original PDFs. Compute the mean and standard deviation of the gaussian PDF that is proportionate
+    to the product of the provided gaussian PDFs."""
+    mean1 = tf.convert_to_tensor(mean1)
+    stddev1 = tf.convert_to_tensor(stddev1)
+    mean2 = tf.convert_to_tensor(mean2)
+    stddev2 = tf.convert_to_tensor(stddev2)
+    variance1 = stddev_to_variance(stddev1, multivariate=multivariate)
+    variance2 = stddev_to_variance(stddev2, multivariate=multivariate)
+    if multivariate:
+        denominator = tf.linalg.pinv(dynamically_condition_covariance_matrix(variance1 + variance2))
+        mean = (tf.matmul(variance2, tf.matmul(denominator, mean1[..., tf.newaxis])) +
+                tf.matmul(variance1, tf.matmul(denominator, mean2[..., tf.newaxis])))
+        mean = tf.squeeze(mean, axis=-1)
+        variance = tf.matmul(variance1, tf.matmul(denominator, variance2))
+        variance = dynamically_condition_covariance_matrix(variance)
+    else:
+        denominator = variance1 + variance2
+        mean = (variance2 * mean1 + variance1 * mean2) / denominator
+        variance = variance1 * variance2 / denominator
+        tf.assert_rank(mean, tf.rank(variance))
+    return mean, variance_to_stddev(variance, multivariate=multivariate)
+
+
+@tf.function
+def batched_gaussian_pdf_product(term_means, term_stddevs):
+    """Given a batch of sequences of multivariate gaussian means and standard deviations, compute
+    the gaussian pdf product of each sequence in the batch. The means and standard deviations may be
+    stored in a ragged tensor in the case where the sequences have different lengths."""
+    if isinstance(term_means, tf.RaggedTensor):
+        assert isinstance(term_stddevs, tf.RaggedTensor)
+        term_counts = term_means.row_lengths(axis=-2)
+        max_terms = term_means.bounding_shape(axis=tf.rank(term_means) - 2)  # Negatives don't work
+        tf.assert_equal(term_counts, term_stddevs.row_lengths(axis=-3))
+        tf.assert_equal(max_terms, term_stddevs.bounding_shape(axis=tf.rank(term_stddevs) - 3))
+        term_means = term_means.to_tensor(math.nan)
+        term_stddevs = term_stddevs.to_tensor(math.nan)
+        tf.assert_equal(tf.shape(term_counts)[-1], tf.shape(term_means)[-3])
+    else:
+        assert not isinstance(term_stddevs, tf.RaggedTensor)
+        term_means = tf.convert_to_tensor(term_means)
+        term_stddevs = tf.convert_to_tensor(term_stddevs)
+        max_terms = tf.shape(term_means)[-2]
+        term_counts = tf.reshape(max_terms, (1,))
+        tf.assert_equal(max_terms, tf.shape(term_stddevs)[-3])
+    tf.assert_greater(term_counts, tf.cast(0, term_counts.dtype),
+                      "Gaussian product is ill-defined for zero terms.")
+
+    product_mean = term_means[..., 0, :]
+    product_stddev = term_stddevs[..., 0, :, :]
+    for counter in tf.range(1, max_terms):
+        component_mean = term_means[..., counter, :]
+        component_stddev = term_stddevs[..., counter, :, :]
+        maybe_new_mean, maybe_new_stddev = gaussian_pdf_product(product_mean, product_stddev,
+                                                                component_mean, component_stddev)
+        new_observation = counter < term_counts
+        product_mean = tf.where(new_observation[:, tf.newaxis], maybe_new_mean, product_mean)
+        product_stddev = tf.where(new_observation[:, tf.newaxis, tf.newaxis],
+                                  maybe_new_stddev, product_stddev)
+    return product_mean, product_stddev
+
+
+@tf.function(experimental_relax_shapes=True)
+def leave_one_out_batched_gaussian_pdf_product(term_means, term_stddevs):
+    """Given a batch of sequences of gaussian means and standard deviations, compute the N gaussian
+    pdf products of each sequence in the batch that result from leaving each entry in the sequence
+    out. The means and standard deviations may be stored in a ragged tensor in the case where the
+    sequences have different lengths.
+
+    This works like batched_gaussian_pdf_product, except that instead of just one product per
+    sequence, N distinct products are computed, each with a different term from the sequence left
+    out, which is useful for generating training targets that don't depend on the output of the
+    model being trained."""
+
+    # Input shapes:
+    #   term_means: batch_shape + (max_terms, channels)
+    #   term_stddevs: batch_shape + (max_terms, channels, channels)
+    # Output shapes:
+    #   product_mean: batch_shape + (max_terms, channels)
+    #   product_stddev: batch_shape + (max_terms, channels, channels)
+
+    if isinstance(term_means, tf.RaggedTensor):
+        assert isinstance(term_stddevs, tf.RaggedTensor)
+        term_counts = term_means.row_lengths(axis=-2)
+        max_terms = term_means.bounding_shape(axis=tf.rank(term_means) - 2)  # Negatives don't work
+        tf.assert_equal(term_counts, term_stddevs.row_lengths(axis=-3))
+        tf.assert_equal(max_terms, term_stddevs.bounding_shape(axis=tf.rank(term_stddevs) - 3))
+        term_means = term_means.to_tensor(math.nan)
+        term_stddevs = term_stddevs.to_tensor(math.nan)
+        tf.assert_equal(tf.shape(term_counts)[-1], tf.shape(term_means)[-3])
+    else:
+        assert not isinstance(term_stddevs, tf.RaggedTensor)
+        term_means = tf.convert_to_tensor(term_means)
+        term_stddevs = tf.convert_to_tensor(term_stddevs)
+        max_terms = tf.shape(term_means)[-2]
+        term_counts = tf.reshape(max_terms, (1,))
+        tf.assert_equal(max_terms, tf.shape(term_stddevs)[-3])
+    tf.assert_greater(term_counts, tf.cast(1, term_counts.dtype),
+                      "Leave-one-out gaussian product is ill-defined for less than 2 terms.")
+
+    batch_shape = tf.shape(term_means)[:-2]
+    batch_broadcast_shape = tf.ones_like(batch_shape)
+    channels = tf.shape(term_means)[-1]
+
+    tf.assert_rank(term_counts, 1)
+    term_counts = tf.reshape(term_counts,
+                             tf.concat([batch_broadcast_shape[:-1],
+                                        tf.shape(term_counts)[-1:],
+                                        [1]],
+                                       axis=-1))
+
+    product_defined_shape = tf.concat([batch_shape, [max_terms]], axis=-1)
+    product_mean_shape = tf.concat([batch_shape, [max_terms, channels]], axis=-1)
+    product_stddev_shape = tf.concat([batch_shape, [max_terms, channels, channels]], axis=-1)
+
+    product_defined = tf.zeros(product_defined_shape, dtype=tf.bool)
+    product_mean = tf.zeros(product_mean_shape, dtype=term_means.dtype)
+    product_stddev = tf.zeros(product_stddev_shape, dtype=term_stddevs.dtype)
+
+    for counter in tf.range(max_terms):  # For each term in the group
+        term_mean = term_means[..., counter:counter + 1, :]
+        term_stddev = term_stddevs[..., counter:counter + 1, :, :]
+
+        maybe_new_mean, maybe_new_stddev = gaussian_pdf_product(product_mean, product_stddev,
+                                                                term_mean, term_stddev)
+
+        # Is the current term we are looking at within the bounds of the group?
+        new_observation = counter < term_counts
+
+        # Is the current term we are looking at the same term as the one we are computing the
+        # product for?
+        non_self = tf.reshape(counter != tf.range(max_terms),
+                              tf.concat([batch_broadcast_shape, [max_terms]], axis=-1))
+
+        keep_product = new_observation & non_self
+
+        product_mean = tf.where(keep_product[..., tf.newaxis], maybe_new_mean, product_mean)
+        product_stddev = tf.where(keep_product[..., tf.newaxis, tf.newaxis],
+                                  maybe_new_stddev, product_stddev)
+
+        product_mean = tf.where(product_defined[..., tf.newaxis], product_mean, term_mean)
+        product_stddev = tf.where(product_defined[..., tf.newaxis, tf.newaxis],
+                                  product_stddev, term_stddev)
+
+        product_defined = product_defined | keep_product
+
+    tf.assert_equal(tf.shape(product_mean), tf.shape(term_means))
+    tf.assert_equal(tf.shape(product_stddev), tf.shape(term_stddevs))
+
+    return product_mean, product_stddev
+
+
+@tf.function
 def unit_vector_to_rotation_matrix(orientation, initial_orientation=None) -> tf.Tensor:
     """Assuming the given initial orientation, return the rotation matrix corresponding to the
     given orientation vector. If no initial orientation is specified, the unit vector
