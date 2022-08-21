@@ -143,3 +143,39 @@ def sample_multivariate_normal(mean, stddev, batch_shape=(), seed=None) -> tf.Te
 
     # noinspection PyTypeChecker
     return sample, grad
+
+
+@tf.function
+def unit_vector_to_rotation_matrix(orientation, initial_orientation=None) -> tf.Tensor:
+    """Assuming the given initial orientation, return the rotation matrix corresponding to the
+    given orientation vector. If no initial orientation is specified, the unit vector
+    [1, 0, ..., 0] is assumed. Both arguments should be unit-length vectors.
+
+    To apply the rotation matrix to a batch of vectors v, use:
+        v_rot = tf.matmul(r, v[..., tf.newaxis])[..., 0]
+
+    NOTE: The computed rotation matrix is its own rotational inverse, so applying it a second time
+          will return your rotated vector (or batch) back to its original orientation.
+    """
+    orientation = tf.convert_to_tensor(orientation)
+    channels = tf.shape(orientation)[-1]
+    if initial_orientation is None:
+        initial_orientation = tf.concat([[1.0], tf.zeros(channels - 1, orientation.dtype)], axis=0)
+    else:
+        initial_orientation = tf.convert_to_tensor(initial_orientation)
+    o_sum = orientation + initial_orientation
+    row = o_sum[..., tf.newaxis, :]
+    col = o_sum[..., :, tf.newaxis]
+    prod = row * col
+    prod_magnitude = dot(o_sum, o_sum)[..., tf.newaxis, tf.newaxis]
+    return 2.0 * prod / prod_magnitude - tf.eye(channels, dtype=o_sum.dtype)
+
+
+@tf.function
+def uniform_random_rotation_matrix(d, batch_shape=()) -> tf.Tensor:
+    """Generate a (batch of) uniformly distributed random rotation matrices of dimension d."""
+    # Sample uniformly distributed vectors on the unit hypersphere in d dimensions.
+    if tfp is None:
+        raise ImportError("This functionality requires tensorflow_probability to be installed.")
+    orientations = tfp.random.spherical_uniform(batch_shape, d)
+    return unit_vector_to_rotation_matrix(orientations)
