@@ -517,3 +517,27 @@ def safe_mse(targets, predictions, name=None) -> tf.Tensor:
     error = tf.square(tf.stop_gradient(targets) - predictions)
     safe_error = tf.where(tf.math.is_finite(error), error, 0.0)
     return tf.reduce_sum(safe_error, name=name)
+
+
+@tf.function
+def generalized_variance(stddev) -> tf.Tensor:
+    """Compute the generalized variance (GV) of a distribution, given its lower-triangular
+    standard deviation matrix. 
+    (See https://faculty.ucr.edu/~ashis/publication/publications/ESS6053.PDF)
+    """
+    stddev = tf.convert_to_tensor(stddev)
+    det = tf.linalg.det(stddev_to_variance(stddev))
+    # Insure it's non-negative. Floating point errors can result in it being very slightly negative.
+    det = det - tf.minimum(0.0, tf.stop_gradient(det))
+    return det
+
+
+@tf.function
+def standardized_generalized_variance(stddev) -> tf.Tensor:
+    """Compute the standardized generalized variance (SGV) of a distribution, given its 
+    lower-triangular standard deviation matrix. 
+    (See https://faculty.ucr.edu/~ashis/publication/publications/ESS6053.PDF)
+    """
+    stddev = tf.convert_to_tensor(stddev)
+    gv = generalized_variance(stddev)
+    return tf.pow(gv, 1.0 / tf.cast(tf.shape(stddev)[-1], det.dtype))
