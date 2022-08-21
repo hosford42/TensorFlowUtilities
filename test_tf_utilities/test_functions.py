@@ -100,24 +100,6 @@ def test_flat_to_stddev():
     tf.assert_greater(tf.linalg.diag_part(s), 0.000001)
 
 
-def test_flat_to_mean_and_stddev():
-    tf.random.set_seed(0)
-
-    x = tf.random.uniform((3 + 3,)) * 2.0 - 1.0
-    m, s = flat_to_mean_and_stddev(x, 3, multivariate=False, min_stddev=0.000001)
-    tf.assert_equal(m.shape, (3,))
-    tf.assert_equal(m, x[:3])
-    tf.assert_equal(s.shape, (3,))
-    tf.assert_greater(s, 0.000001)
-
-    x = tf.random.uniform((3 + 3 * (3 + 1) // 2,)) * 2.0 - 1.0
-    m, s = flat_to_mean_and_stddev(x, 3, multivariate=True, min_stddev=0.000001)
-    tf.assert_equal(m.shape, (3,))
-    tf.assert_equal(m, x[:3])
-    tf.assert_equal(s.shape, (3, 3))
-    tf.assert_greater(tf.linalg.diag_part(s), 0.000001)
-
-
 def test_stddev_to_variance():
     tf.random.set_seed(0)
 
