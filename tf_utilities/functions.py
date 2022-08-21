@@ -9,6 +9,32 @@ except ImportError:
 
 
 @tf.function
+def dot(x, y, axis=-1) -> tf.Tensor:
+    """Vector dot product along the given axis."""
+    x = tf.convert_to_tensor(x)
+    y = tf.convert_to_tensor(y)
+    return tf.reduce_sum(x * y, axis=axis)
+
+
+@tf.function
+def transpose_matrix(m) -> tf.Tensor:
+    m = tf.convert_to_tensor(m)
+    rank = tf.rank(m)
+    tf.assert_greater(rank, 1)
+    perm = tf.concat([tf.range(rank - 2), [rank - 1, rank - 2]], axis=-1)
+    return tf.transpose(m, perm)
+
+
+@tf.function
+def matrix_eye_like(m) -> tf.Tensor:
+    m = tf.convert_to_tensor(m)
+    rank = tf.rank(m)
+    tf.assert_greater(rank, 1)
+    shape = tf.shape(m)
+    return tf.eye(shape[-2], shape[-1], batch_shape=shape[:-2])
+
+
+@tf.function
 def recompose_cholesky(lower) -> tf.Tensor:
     """Given the lower triangular cholesky decomposition of a matrix, compute the original matrix
     that was factored and return it."""
