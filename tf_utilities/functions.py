@@ -507,3 +507,13 @@ def zero_nan_grad(x) -> tf.Tensor:
 def unreported_loss(loss: tf.Tensor) -> tf.Tensor:
     """Hide a regularization loss, so it isn't reported by Keras in the total loss on each epoch."""
     return loss - tf.stop_gradient(loss)
+
+
+@tf.function
+def safe_mse(targets, predictions, name=None) -> tf.Tensor:
+    """Mean squared error, ignoring rows where the loss is undefined (nan)."""
+    targets = tf.convert_to_tensor(targets)
+    predictions = tf.convert_to_tensor(predictions)
+    error = tf.square(tf.stop_gradient(targets) - predictions)
+    safe_error = tf.where(tf.math.is_finite(error), error, 0.0)
+    return tf.reduce_sum(safe_error, name=name)
