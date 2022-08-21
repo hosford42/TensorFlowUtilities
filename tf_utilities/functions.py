@@ -99,6 +99,21 @@ def variance_to_stddev(variance, multivariate=True) -> tf.Tensor:
 
 
 @tf.function
+def sample_stddev_matrix(data, sample_axis=0, keepdims=False, tolerance=0.000001) -> tf.Tensor:
+    """Compute the lower-triangular stddev matrix of a set of sample data.
+    NOTE: This function replaces tfp.stats.cholesky_covariance, which raises an exception
+          if the covariance matrix isn't invertible instead of using nans."""
+    if tfp is None:
+        raise ImportError("This functionality requires tensorflow_probability to be installed.")
+    covariance = tfp.stats.covariance(data, sample_axis=sample_axis, keepdims=keepdims)
+    broadcast_eye = tf.reshape(tf.eye(tf.shape(covariance)[-1]),
+                               tf.concat([tf.ones_like(tf.shape(covariance)[:sample_axis+1]),
+                                          tf.shape(covariance)[sample_axis+1:]],
+                                         axis=-1))
+    return variance_to_stddev(covariance + tolerance * broadcast_eye)
+
+
+@tf.function
 def condition_covariance_matrix(variance, min_var=0.000001, jitter=0.000001) -> tf.Tensor:
     """Ensure that the covariance matrix has the expected properties of being symmetric and
     positive definite by making minor adjustments to it."""
