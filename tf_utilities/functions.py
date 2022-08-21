@@ -242,3 +242,42 @@ def real_matrix_pow(m, p, tolerance=0.0001) -> tf.Tensor:
                                   keepdims=True),
                     tf.cast(complex_result, tf.float32),
                     math.nan)
+
+
+@tf.custom_gradient
+def invert_gradient(x) -> tf.Tensor:
+    """Invert the gradient of the given tensor."""
+    x = tf.convert_to_tensor(x)
+
+    def grad(upstream):
+        return -upstream
+
+    # noinspection PyTypeChecker
+    return x, grad
+
+
+@tf.custom_gradient
+def clip_grad_by_norm(x, clip_norm) -> tf.Tensor:
+    """Restrict the magnitude (norm) of a tensor's gradient to an upper bound."""
+    def grad(upstream):
+        return tf.clip_by_norm(upstream, clip_norm), None
+
+    # noinspection PyTypeChecker
+    return x, grad
+
+
+@tf.custom_gradient
+def zero_nan_grad(x) -> tf.Tensor:
+    """Replace NaN values in a tensor's gradient with zeros to prevent ruining a partially trained
+    model due to undefined gradients."""
+    def grad(upstream):
+        return tf.where(tf.math.is_nan(upstream), 0.0, upstream)
+
+    # noinspection PyTypeChecker
+    return x, grad
+
+
+@tf.function
+def unreported_loss(loss: tf.Tensor) -> tf.Tensor:
+    """Hide a regularization loss, so it isn't reported by Keras in the total loss on each epoch."""
+    return loss - tf.stop_gradient(loss)
