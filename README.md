@@ -12,6 +12,7 @@ Currently the functionality implemented here includes:
 * Tools for sequential data
 * Gradient manipulations
 * Loss manipulations
+* On-line data collection
 
 
 ## Installation
