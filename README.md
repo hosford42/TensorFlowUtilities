@@ -14,6 +14,14 @@ Currently the functionality implemented here includes:
 * Loss manipulations
 
 
+## Installation
+
+```bash
+$ git clone https://github.com/hosford42/TensorFlowUtilities.git
+$ cd TensorFlowUtilities/
+$ pip3 install .
+```
+
 ## Contributing
 
 ### Pull Requests
