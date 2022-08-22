@@ -1,3 +1,5 @@
+from typing import Tuple, Optional
+
 import tensorflow as tf
 
 
