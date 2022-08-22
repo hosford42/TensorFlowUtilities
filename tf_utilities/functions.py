@@ -162,6 +162,26 @@ def mahalanobis_sq(points, stddev) -> tf.Tensor:
     return tf.squeeze(result, axis=(-2, -1))
 
 
+@tf.function
+def _sample_multivariate_normal(mean, stddev, batch_shape=(), seed=None) -> tf.Tensor:
+    mean = tf.convert_to_tensor(mean)
+    stddev = tf.convert_to_tensor(stddev)
+    dims = tf.shape(mean)[-1]
+    param_batch_shape = tf.shape(mean)[:-1]
+    tf.assert_rank(stddev, tf.rank(mean) + 1)
+    tf.assert_equal(tf.shape(stddev)[-1], dims)
+    tf.assert_equal(tf.shape(stddev)[-2], dims)
+    tf.assert_equal(param_batch_shape, tf.shape(stddev)[:-2])
+    batch_shape = tf.convert_to_tensor(batch_shape, dtype=dims.dtype)
+    broadcast_mean_shape = tf.concat([tf.ones_like(batch_shape), tf.shape(mean)], axis=-1)
+    mean = tf.reshape(mean, broadcast_mean_shape)
+    broadcast_stddev_shape = tf.concat([tf.ones_like(batch_shape), tf.shape(stddev)], axis=-1)
+    stddev = tf.reshape(stddev, broadcast_stddev_shape)
+    sample_shape = tf.concat([batch_shape, param_batch_shape, [dims]], axis=-1)
+    standard_normal_sample = tf.random.normal(sample_shape, seed=seed)
+    return mean + tf.linalg.LinearOperatorLowerTriangular(stddev).matvec(standard_normal_sample)
+
+
 @tf.custom_gradient
 def sample_multivariate_normal(mean, stddev, batch_shape=(), seed=None) -> tf.Tensor:
     """Produce a sample from a multivariate normal distribution with the given mean and
@@ -176,7 +196,7 @@ def sample_multivariate_normal(mean, stddev, batch_shape=(), seed=None) -> tf.Te
     batch_shape = tf.convert_to_tensor(batch_shape, dtype=tf.int32)
     batch_size = tf.reduce_prod(batch_shape)
 
-    sample = tf.stop_gradient(sample_mv_normal(mean, stddev, batch_shape, seed))
+    sample = tf.stop_gradient(_sample_multivariate_normal(mean, stddev, batch_shape, seed))
 
     def grad(upstream):
         mean_grad = upstream
