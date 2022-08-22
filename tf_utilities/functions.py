@@ -241,7 +241,7 @@ def standardized_generalized_variance(stddev) -> tf.Tensor:
     """
     stddev = tf.convert_to_tensor(stddev)
     gv = generalized_variance(stddev)
-    return tf.pow(gv, 1.0 / tf.cast(tf.shape(stddev)[-1], det.dtype))
+    return tf.pow(gv, 1.0 / tf.cast(tf.shape(stddev)[-1], gv.dtype))
 
 
 @tf.function
