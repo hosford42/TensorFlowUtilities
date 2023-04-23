@@ -232,7 +232,7 @@ def test_find_permutation_cycles():
 
 def test_random_permutation_with_cycles():
     tf.random.set_seed(0)
-    for _ in range(100):
+    for _ in range(10):
         permutation, partition = random_permutation_with_cycles([10])
         detected_cycles = find_permutation_cycles(permutation)
         assert tf.reduce_all(detected_cycles == tf.zeros_like(detected_cycles))

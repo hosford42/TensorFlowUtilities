@@ -649,8 +649,6 @@ def random_permutation_with_cycles(cycle_lengths: TensorLike) -> Tuple[tf.Tensor
     permutation_inv = tf.gather(partition_inv, shuffle_order)
     permutation = tf.argsort(permutation_inv)
 
-    # find_permutation_cycles(permutation, )
-
     tf.assert_equal(tf.shape(permutation), (result_size,))
     tf.assert_equal(tf.shape(partition), (result_size,))
     tf.assert_equal(partition, tf.gather(partition, permutation))
