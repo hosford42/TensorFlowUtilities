@@ -208,3 +208,49 @@ def test_sliding_window():
                 for l in range(2):
                     for m in range(3):
                         assert windows[i, j, k, l, m] == data[i, j, k + l, m]
+
+
+def test_find_permutation_cycles():
+    test_pairs = [
+        ([range(10)], [range(10)]),
+        ([range(1, 10), [0]], [[0] * 10]),
+        ([range(1, 5), [0], range(6, 10), [5]],
+         [[0] * 5, [5] * 5]),
+        ([0, 3, 1, 7, 2, 5, 8, 9, 6, 4],
+         [0, 1, 1, 1, 1, 5, 6, 1, 6, 1])
+    ]
+    for index, (x, y) in enumerate(test_pairs):
+        x = tf.concat(x, axis=0).numpy()
+        y = tf.concat(y, axis=0).numpy()
+        y_hat = find_permutation_cycles(x).numpy()
+        if not tf.reduce_all(y_hat == y):
+            print(f"{x=}")
+            print(f"{y_hat=}")
+            print(f"{y=}")
+            assert False, f"Failed on case {index}"
+
+
+def test_random_permutation_with_cycles():
+    tf.random.set_seed(0)
+    for _ in range(100):
+        permutation, partition = random_permutation_with_cycles([10])
+        detected_cycles = find_permutation_cycles(permutation)
+        assert tf.reduce_all(detected_cycles == tf.zeros_like(detected_cycles))
+    for _ in range(10):
+        # 1 to 100 cycles of random length from 1 to 100.
+        cycle_count = tf.random.uniform((), 1, 101, dtype=tf.int32)
+        cycle_lengths = tf.random.uniform((cycle_count,), 1, 101, dtype=tf.int32)
+        permutation, partition = random_permutation_with_cycles(cycle_lengths)
+        assert permutation.dtype == tf.int32
+        assert partition.dtype == tf.int32
+        assert tf.rank(permutation) == 1
+        assert tf.rank(partition) == 1
+        assert permutation.shape[0] == tf.reduce_sum(cycle_lengths)
+        assert permutation.shape[0] == partition.shape[0]
+        assert tf.reduce_all(tf.gather(partition, permutation) == partition)
+        y, idx, counts = tf.unique_with_counts(partition)
+        y_order = tf.argsort(y)
+        assert tf.reduce_all(tf.gather(y, y_order) == tf.range(cycle_count))
+        assert tf.reduce_all(tf.gather(counts, y_order) == cycle_lengths)
+        actual_cycles = find_permutation_cycles(permutation, 101)
+        assert tf.unique(actual_cycles).y.shape == tf.unique(partition).y.shape

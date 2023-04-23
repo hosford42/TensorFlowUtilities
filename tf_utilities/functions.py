@@ -2,6 +2,7 @@ import math
 from typing import Tuple
 
 import tensorflow as tf
+from tensorflow.python.types.core import TensorLike
 
 try:
     import tensorflow_probability as tfp
@@ -45,7 +46,8 @@ def recompose_cholesky(lower) -> tf.Tensor:
 
 @tf.function
 def stddev_to_flat(stddev, multivariate=True) -> tf.Tensor:
-    """Convert a lower triangular matrix of shape (N, N) to a vector of shape (N * (N + 1) // 2,)."""
+    """Convert a lower triangular matrix of shape (N, N) to a vector of shape
+    (N * (N + 1) // 2,)."""
     stddev = tf.convert_to_tensor(stddev)
     if multivariate:
         if tfp is None:
@@ -562,3 +564,94 @@ def safe_mse(targets, predictions, name=None) -> tf.Tensor:
     error = tf.square(tf.stop_gradient(targets) - predictions)
     safe_error = tf.where(tf.math.is_finite(error), error, 0.0)
     return tf.reduce_mean(safe_error, name=name)
+
+
+@tf.function
+def find_permutation_cycles(permutation: TensorLike, max_length: int = None) -> tf.Tensor:
+    permutation = tf.convert_to_tensor(permutation)
+    tf.assert_rank(permutation, 1)
+    tf.assert_greater(tf.size(permutation), 0)
+    if max_length is None:
+        max_length = tf.size(permutation)
+    else:
+        max_length = tf.convert_to_tensor(max_length, tf.int32)
+    cycles = permutation
+    for length in range(1, max_length + 1):
+        permuted_cycles = tf.gather(cycles, permutation)
+        cycles = tf.minimum(cycles, permuted_cycles)
+        if tf.reduce_all(cycles == permuted_cycles):
+            break
+    return cycles
+
+
+@tf.function
+def swap(vector: TensorLike, index1: int, index2: int) -> tf.Tensor:
+    vector = tf.convert_to_tensor(vector)
+    index1 = tf.convert_to_tensor(index1, tf.int32)
+    tf.assert_rank(index1, 0)
+    index2 = tf.convert_to_tensor(index2, tf.int32)
+    tf.assert_rank(index2, 0)
+    if index1 == index2:
+        return vector
+    if index1 < index2:
+        lower = index1
+        upper = index2
+    else:
+        lower = index2
+        upper = index1
+    return tf.concat([
+        vector[..., :lower],
+        vector[..., upper:upper + 1],
+        vector[..., lower + 1:upper],
+        vector[..., lower:lower + 1],
+        vector[..., upper + 1:]
+    ], axis=-1)
+
+
+@tf.function
+def random_permutation_with_cycles(cycle_lengths: TensorLike) -> Tuple[tf.Tensor, tf.Tensor]:
+    """Given a set of cycle lengths, generate a single random permutation that contains interleaved
+    cycles of the given lengths. Returns two int32 vectors, both with length equal to the sum of the
+    cycle lengths. The first is the generated permutation. The second is a mapping from each index
+    to the cycle it belongs to -- an integer index into the original cycle_lengths vector."""
+    cycle_lengths = tf.convert_to_tensor(cycle_lengths, dtype=tf.int32)
+    tf.assert_rank(cycle_lengths, 1)
+    tf.assert_greater(cycle_lengths, 0)
+
+    cycle_count = tf.size(cycle_lengths)
+    result_size = tf.reduce_sum(cycle_lengths)
+    cycle_starts = tf.cumsum(cycle_lengths, exclusive=True)
+
+    # Maps from each index to the cycle it belongs to, where cycles are numbered according to
+    # their positions in the original cycle_lengths vector.
+    partition = tf.TensorArray(tf.int32, size=cycle_count, dynamic_size=False,
+                               clear_after_read=True, infer_shape=False,
+                               element_shape=tf.TensorShape([None]))
+    indices = tf.TensorArray(tf.int32, size=cycle_count, dynamic_size=False,
+                             clear_after_read=True, infer_shape=False,
+                             element_shape=tf.TensorShape([None]))
+    for index in tf.range(cycle_count):
+        tf.autograph.experimental.set_loop_options(parallel_iterations=True)
+        cycle_labels = tf.repeat(index, cycle_lengths[index])
+        partition = partition.write(index, cycle_labels)
+        cycle_indices = cycle_starts[index] + tf.concat([tf.range(1, cycle_lengths[index]), [0]],
+                                                        axis=0)
+        indices = indices.write(index, cycle_indices)
+    partition = partition.concat()
+    tf.assert_equal(tf.shape(partition), (result_size,))
+    indices = indices.concat()
+    tf.assert_equal(tf.shape(indices), (result_size,))
+
+    shuffle_order = tf.random.shuffle(tf.range(result_size))
+    partition = tf.gather(partition, shuffle_order)
+    indices = tf.gather(indices, shuffle_order)
+    partition_inv = tf.argsort(indices)
+    permutation_inv = tf.gather(partition_inv, shuffle_order)
+    permutation = tf.argsort(permutation_inv)
+
+    # find_permutation_cycles(permutation, )
+
+    tf.assert_equal(tf.shape(permutation), (result_size,))
+    tf.assert_equal(tf.shape(partition), (result_size,))
+    tf.assert_equal(partition, tf.gather(partition, permutation))
+    return permutation, partition
