@@ -2,6 +2,7 @@ import math
 from typing import Tuple
 
 import tensorflow as tf
+from tensorflow import Tensor
 from tensorflow.python.types.core import TensorLike
 
 try:
@@ -653,3 +654,43 @@ def random_permutation_with_cycles(cycle_lengths: TensorLike) -> Tuple[tf.Tensor
     tf.assert_equal(tf.shape(partition), (result_size,))
     tf.assert_equal(partition, tf.gather(partition, permutation))
     return permutation, partition
+
+
+@tf.function
+def partitioned_mean(x: TensorLike, partition: TensorLike) -> tf.Tensor:
+    """Compute the mean of the values of x appearing in each partition, and return a tensor with
+    the same shape and dtype as x, but with each value replaced by the mean of the partition it
+    appears within. The partition must be an integer tensor, and x must be a floating-point
+    tensor. Both must have the same shape."""
+    x = tf.convert_to_tensor(x, dtype_hint=tf.float32)
+    partition = tf.convert_to_tensor(partition, dtype_hint=tf.int32)
+    assert x.dtype.is_floating
+    assert partition.dtype.is_integer
+    tf.assert_equal(tf.shape(x), tf.shape(partition))
+    shape = tf.shape(x)
+    x = tf.reshape(x, (tf.size(x),))
+    partition = tf.reshape(partition, (tf.size(partition),))
+    partition_labels = tf.unique(partition).y
+    indices = tf.TensorArray(tf.int64, size=tf.size(partition_labels), dynamic_size=False,
+                             clear_after_read=True, element_shape=(None,))
+    means = tf.TensorArray(x.dtype, size=tf.size(partition_labels), dynamic_size=False,
+                           clear_after_read=True, element_shape=(None,))
+    for label_counter in tf.range(tf.size(partition_labels)):
+        tf.autograph.experimental.set_loop_options(parallel_iterations=True)
+        label = partition_labels[label_counter]
+        label_indices = tf.squeeze(tf.where(partition == label), axis=1)
+        label_values = tf.gather(x, label_indices)
+        label_means = tf.repeat(tf.reduce_mean(label_values), tf.size(label_indices))
+        indices = indices.write(label_counter, label_indices)
+        means = means.write(label_counter, label_means)
+    indices = indices.concat()
+    means = means.concat()
+    result = tf.gather(means, tf.argsort(indices))
+    return tf.reshape(result, shape)
+
+
+@tf.function
+def softminus(x: TensorLike) -> Tensor:
+    """Like softplus, but negative."""
+    x = tf.convert_to_tensor(x)
+    return -tf.nn.softplus(-x)
